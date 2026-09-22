@@ -2,12 +2,27 @@
 
 간호사 근무표(스케줄) 자동 생성 서비스. 간호사들이 엑셀과 달력을 병행하며 수작업으로 근무표를 짜는 부담을 줄이는 것이 목표.
 
-# 기술 스택
-
 - **Frontend**: React
 - **Backend**: Spring
 - **Database**: PostgreSQL
 - 그 외 스택(언어 버전, 빌드 도구, 테스트 프레임워크, 배포 환경 등)은 아직 미정. 확정되는 대로 이 문서를 갱신할 것.
+
+# 디렉토리 구조
+
+Backend(3-Layered)와 Frontend(React)를 분리한 구조를 기본으로 한다. 언어/빌드 도구가 정해지면 세부 경로는 조정한다.
+
+```
+backend/
+  presentation/   # Controller - 요청/응답 처리
+  business/       # Service - 비즈니스 로직, 근무표 생성/검증 규칙
+  persistence/    # Repository - DB 접근
+  domain/         # 계층에 종속되지 않는 핵심 도메인 모델/규칙 (헥사고날 전환 시 이 쪽으로 이동)
+
+frontend/
+  components/     # 재사용 UI 컴포넌트
+  pages/          # 화면 단위
+  api/            # 백엔드 API 호출
+```
 
 # 아키텍처
 
