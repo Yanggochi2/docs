@@ -12,7 +12,7 @@
 | 기간 | 약 7주 |
 | 메인 컬러 | 버건디 + 화이트 |
 | 근무 유형 | `D` Day / `E` Evening / `N` Night / `O` Off (+ `AL` 연차) |
-| 기술 스택 | React / Spring / PostgreSQL (세부 스택은 미정) |
+| 기술 스택 | React / FastAPI (Python) / PostgreSQL (세부 스택은 미정) |
 
 ## 팀
 
