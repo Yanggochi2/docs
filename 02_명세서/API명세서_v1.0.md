@@ -7,6 +7,7 @@
 | 기준일 | 2026년 10월 6일 |
 | 문서 상태 | 기준안 |
 | API 형식 | REST JSON over HTTPS |
+| 개정 | 2026년 10월 7일 소셜 로그인(OAuth) 추가: 1.6, API-AUTH-06~10 |
 | 기본 경로 | `/api/v1` |
 
 이 문서는 기능명세서의 사용자 흐름을 서버 API 계약으로 변환한 기준안이다. 클라이언트 구현, 서버 구현, QA 시나리오가 같은 권한과 상태 규칙을 사용하도록 요청과 응답, 오류, 동시성 조건을 함께 정의한다.
@@ -19,6 +20,7 @@
 - 토큰을 요청 본문, URL 쿼리 또는 브라우저 저장소에 전달하지 않는다.
 - 상태를 변경하는 요청은 `X-CSRF-Token` 헤더를 요구한다.
 - 서버는 역할을 요청 본문에서 받지 않고 인증 세션과 병동 소속에서 판정한다.
+- 소셜 로그인 콜백(`GET /auth/oauth/{provider}/callback`)은 제공자가 호출하므로 CSRF 헤더 대신 `state` 값으로 검증한다. 소셜 가입 완료(`POST /auth/oauth/signup`)는 회원가입·로그인과 같이 CSRF 헤더 없이 허용하고 가입 티켓 쿠키로 검증한다.
 
 ### 1.2 병동 범위 접근 통제
 
@@ -56,6 +58,28 @@
 - 편집 잠금 기능이 활성화된 경우 근무표 변경 요청은 `X-Schedule-Lock-Token`을 요구한다.
 - 일괄 셀 변경은 전체 성공 또는 전체 실패로 처리한다.
 
+### 1.6 소셜 로그인 (OAuth 2.0)
+
+- 제공자는 `{provider}` 경로 값으로 구분한다. 허용값은 `google`, `kakao`이며 실제 제공 여부는 기능명세서 D-03에 따른다. 설정되지 않은 제공자는 `404 OAUTH_PROVIDER_NOT_SUPPORTED`를 반환한다.
+- Authorization Code 방식에 PKCE(S256)를 함께 사용한다. 인가 코드 교환과 제공자 사용자 조회는 서버에서만 한다. 클라이언트 시크릿과 제공자 토큰은 프론트엔드로 보내지 않는다.
+- 흐름은 브라우저 페이지 이동으로 진행한다. 프론트엔드는 `fetch`가 아니라 `window.location`으로 시작 API를 연다.
+  1. 프론트엔드가 `GET /auth/oauth/{provider}/authorize`로 이동한다.
+  2. 서버가 `state`와 PKCE `code_verifier`를 만들어 `OAUTH_STATE` 쿠키(HttpOnly, Secure, `SameSite=Lax`, Path=`/api/v1/auth/oauth`, 10분)에 담고 제공자 인증 화면으로 `302` 리다이렉트한다.
+  3. 제공자가 `GET /auth/oauth/{provider}/callback?code=...&state=...`로 돌려보낸다. 서버는 `state`를 쿠키와 대조한 뒤 즉시 `OAUTH_STATE` 쿠키를 만료시킨다.
+  4. 결과에 따라 프론트엔드 경로로 `302` 리다이렉트한다.
+
+| 콜백 결과 | 서버 처리 | 리다이렉트 경로 |
+| --- | --- | --- |
+| 연결된 계정 있음 | 인증 쿠키 발급 (1.1과 같음) | `redirectTo` 또는 `/` |
+| 연결된 계정 없음 (LOGIN) | `OAUTH_SIGNUP_TICKET` 쿠키 발급 (HttpOnly, Secure, `SameSite=Lax`, Path=`/api/v1/auth/oauth`, 10분) | `/signup/social` |
+| 계정 연결 성공 (LINK) | 현재 계정에 소셜 계정 연결 | `redirectTo` 또는 `/settings/account` |
+| 실패 | 쿠키를 발급하지 않음 | `/login?error={오류 코드}` (LINK면 `/settings/account?error={오류 코드}`) |
+
+- 리다이렉트 경로의 `error` 값은 오류 코드만 담고 토큰, 인가 코드, 이메일 같은 값은 담지 않는다.
+- `redirectTo`는 `/`로 시작하는 서비스 내부 경로만 허용한다. `//` 또는 `http`로 시작하는 값은 무시하고 기본 경로를 사용한다(오픈 리다이렉트 방지).
+- 인증 쿠키와 `OAUTH_STATE`, `OAUTH_SIGNUP_TICKET` 쿠키는 제공자에서 돌아오는 페이지 이동에 실려야 하므로 `SameSite=Lax`를 사용한다.
+- 제공자 사용자 식별자(`sub`, 카카오 회원번호)로 계정을 찾는다. 이메일은 식별에 쓰지 않는다. 같은 이메일의 기존 계정이 있어도 자동으로 연결하지 않는다(기능명세서 D-18).
+
 ## 2 API 데이터베이스
 
 | API ID | 영역 | API명 | 기능 ID | Method | Path | 권한 | 우선순위 | 결정 필요 |
@@ -65,6 +89,11 @@
 | API-AUTH-03 | 인증과 소속 | 세션 갱신 | AUTH-02 | POST | /auth/refresh | 리프레시 쿠키 | P1 | 예 |
 | API-AUTH-04 | 인증과 소속 | 로그아웃 | AUTH-02 | POST | /auth/logout | 인증 사용자 | P1 | 아니요 |
 | API-AUTH-05 | 인증과 소속 | 내 계정과 소속 조회 | AUTH-02 | GET | /me | 인증 사용자 | P1 | 아니요 |
+| API-AUTH-06 | 인증과 소속 | 소셜 로그인 시작 | AUTH-08, AUTH-09 | GET | /auth/oauth/{provider}/authorize | 공개 (LINK는 인증 사용자) | P1 | 예 |
+| API-AUTH-07 | 인증과 소속 | 소셜 로그인 콜백 | AUTH-08, AUTH-09 | GET | /auth/oauth/{provider}/callback | 공개 (state 쿠키) | P1 | 아니요 |
+| API-AUTH-08 | 인증과 소속 | 소셜 가입 완료 | AUTH-08 | POST | /auth/oauth/signup | 가입 티켓 쿠키 | P1 | 예 |
+| API-AUTH-09 | 인증과 소속 | 연결된 소셜 계정 목록 | AUTH-09 | GET | /me/social-accounts | 인증 사용자 | P2 | 아니요 |
+| API-AUTH-10 | 인증과 소속 | 소셜 계정 연결 해제 | AUTH-09 | DELETE | /me/social-accounts/{provider} | 인증 사용자 | P2 | 아니요 |
 | API-WARD-01 | 인증과 소속 | 병동 개설 | AUTH-03 | POST | /wards | 소속 없는 사용자 | P1 | 예 |
 | API-WARD-02 | 인증과 소속 | 내 병동 조회 | AUTH-03 | GET | /wards/me | 병동 구성원 | P1 | 아니요 |
 | API-WARD-03 | 인증과 소속 | 병동 가입 신청 | AUTH-04 | POST | /ward-membership-requests | 소속 없는 사용자 | P1 | 예 |
@@ -187,6 +216,75 @@
 | 성공 응답 | 200 MeResponse |
 | 주요 오류 | 401 UNAUTHENTICATED |
 | 우선순위 | P1 |
+| 결정 필요 | 아니요 |
+
+#### API-AUTH-06 소셜 로그인 시작
+
+| 항목 | 내용 |
+| --- | --- |
+| 기능 ID | AUTH-08, AUTH-09 |
+| 요청 | `GET /auth/oauth/{provider}/authorize?intent=LOGIN&redirectTo=/schedules` |
+| 권한 | 공개. `intent=LINK`이면 인증 사용자 |
+| 입력 | provider `google`\|`kakao`, intent `LOGIN`\|`LINK` (기본 LOGIN), redirectTo 서비스 내부 경로 (선택) |
+| 성공 응답 | 302 제공자 인증 화면 + `OAUTH_STATE` 쿠키 |
+| 주요 오류 | 404 OAUTH_PROVIDER_NOT_SUPPORTED, 401 UNAUTHENTICATED (LINK인데 세션 없음) |
+| 우선순위 | P1 |
+| 결정 필요 | 예. 제공자 목록(D-03) |
+
+#### API-AUTH-07 소셜 로그인 콜백
+
+| 항목 | 내용 |
+| --- | --- |
+| 기능 ID | AUTH-08, AUTH-09 |
+| 요청 | `GET /auth/oauth/{provider}/callback?code=...&state=...` |
+| 권한 | 공개. `OAUTH_STATE` 쿠키 필요. 제공자가 호출하며 프론트엔드가 직접 호출하지 않는다 |
+| 입력 | code, state. 사용자가 동의를 취소하면 제공자가 error를 보낸다 |
+| 성공 응답 | 302 프론트엔드 경로 + 인증 쿠키 또는 `OAUTH_SIGNUP_TICKET` 쿠키 (1.6 표 참고) |
+| 주요 오류 | 302 `/login?error=`로 전달: OAUTH_STATE_INVALID, OAUTH_ACCESS_DENIED, OAUTH_PROVIDER_ERROR, ACCOUNT_DISABLED, SOCIAL_ACCOUNT_ALREADY_LINKED, SOCIAL_PROVIDER_ALREADY_LINKED |
+| 우선순위 | P1 |
+| 결정 필요 | 아니요 |
+
+#### API-AUTH-08 소셜 가입 완료
+
+| 항목 | 내용 |
+| --- | --- |
+| 기능 ID | AUTH-08 |
+| 요청 | `POST /auth/oauth/signup` |
+| 권한 | `OAUTH_SIGNUP_TICKET` 쿠키 |
+| 입력 | name, termsAgreed. 이메일과 비밀번호는 받지 않는다 |
+| 성공 응답 | 201 UserSummary + 인증 쿠키. 가입 티켓 쿠키는 만료 |
+| 주요 오류 | 400 VALIDATION_ERROR, 401 OAUTH_SIGNUP_TICKET_INVALID, 409 EMAIL_ALREADY_EXISTS (제공자 이메일이 기존 계정과 같음, D-18) |
+| 우선순위 | P1 |
+| 결정 필요 | 예. 이메일 충돌 처리(D-18), 이메일 미제공 처리(D-19) |
+
+가입 화면에 보여줄 값이 필요하면 프론트엔드는 `GET /auth/oauth/signup`으로 `{ provider, email, suggestedName }`을 조회한다. 같은 가입 티켓 쿠키로 검증하며 티켓이 없거나 만료되면 401 OAUTH_SIGNUP_TICKET_INVALID를 반환한다.
+
+#### API-AUTH-09 연결된 소셜 계정 목록
+
+| 항목 | 내용 |
+| --- | --- |
+| 기능 ID | AUTH-09 |
+| 요청 | `GET /me/social-accounts` |
+| 권한 | 인증 사용자 |
+| 입력 | 없음 |
+| 성공 응답 | 200 SocialAccount 배열 |
+| 주요 오류 | 401 UNAUTHENTICATED |
+| 우선순위 | P2 |
+| 결정 필요 | 아니요 |
+
+소셜 계정 연결은 별도 API 없이 API-AUTH-06에 `intent=LINK`를 주어 시작한다.
+
+#### API-AUTH-10 소셜 계정 연결 해제
+
+| 항목 | 내용 |
+| --- | --- |
+| 기능 ID | AUTH-09 |
+| 요청 | `DELETE /me/social-accounts/{provider}` |
+| 권한 | 인증 사용자 |
+| 입력 | provider |
+| 성공 응답 | 204 |
+| 주요 오류 | 401 UNAUTHENTICATED, 404 RESOURCE_NOT_FOUND, 409 LAST_LOGIN_METHOD |
+| 우선순위 | P2 |
 | 결정 필요 | 아니요 |
 
 #### API-WARD-01 병동 개설
@@ -909,7 +1007,8 @@
 
 | 스키마 | 필드 |
 | --- | --- |
-| UserSummary | id UUID, name, email, accountStatus |
+| UserSummary | id UUID, name, email (소셜 가입이면 null 가능), accountStatus, hasPassword, socialProviders[] |
+| SocialAccount | provider GOOGLE\|KAKAO, email 또는 null, linkedAt |
 | MeResponse | user UserSummary, membership Membership 또는 null, ward Ward 또는 null |
 | Membership | id, wardId, userId, role HEAD_NURSE\|NURSE, status, joinedAt |
 | Ward | id, hospitalName, wardName, requiredStaff {D,E,N}, createdAt |
@@ -934,6 +1033,8 @@
 | SignupRequest | email | string | 예 | 이메일 형식, 서비스 전체에서 고유 |
 | SignupRequest | password | string | 예 | 8자 이상, 영문과 숫자 포함 |
 | SignupRequest | termsAgreed | boolean | 예 | 반드시 true |
+| SocialSignupRequest | name | string | 예 | 1자부터 50자 |
+| SocialSignupRequest | termsAgreed | boolean | 예 | 반드시 true |
 | NurseCreate | name | string | 예 | 1자부터 50자 |
 | NurseCreate | dutyRole | enum | 예 | CHARGE, PRECEPTOR, NEW, GENERAL |
 | NurseCreate | status | enum | 예 | ACTIVE, PREGNANT, ON_LEAVE, RETIRED |
@@ -986,6 +1087,8 @@
 | 구분 | 허용값 |
 | --- | --- |
 | Membership.role | `HEAD_NURSE`, `NURSE` |
+| SocialAccount.provider | `GOOGLE`, `KAKAO` (경로 값은 소문자 `google`, `kakao`) |
+| OAuth intent | `LOGIN`, `LINK` |
 | Nurse.dutyRole | `CHARGE`, `PRECEPTOR`, `NEW`, `GENERAL` |
 | Nurse.status | `ACTIVE`, `PREGNANT`, `ON_LEAVE`, `RETIRED` |
 | Schedule.status | `DRAFT`, `GENERATING`, `CONFIRMED`, `ARCHIVED` |
@@ -1000,20 +1103,28 @@
 | HTTP | 코드 | 조건 |
 | --- | --- | --- |
 | 400 | `VALIDATION_ERROR` | 필드 형식이나 필수값 오류 |
+| 400 | `OAUTH_STATE_INVALID` | 소셜 로그인 state가 없거나 만료되었거나 다름 |
+| 400 | `OAUTH_ACCESS_DENIED` | 사용자가 제공자 동의 화면에서 취소함 |
 | 401 | `UNAUTHENTICATED` | 세션 없음 또는 만료 |
+| 401 | `OAUTH_SIGNUP_TICKET_INVALID` | 소셜 가입 티켓이 없거나 만료됨 |
 | 403 | `FORBIDDEN` | 로그인했으나 역할 권한 부족 |
 | 404 | `RESOURCE_NOT_FOUND` | 리소스 없음, 다른 병동 리소스, 조회 범위 밖 |
+| 404 | `OAUTH_PROVIDER_NOT_SUPPORTED` | 지원하지 않거나 설정되지 않은 소셜 로그인 제공자 |
 | 409 | `VERSION_CONFLICT` | 낙관적 잠금 버전 불일치 |
 | 409 | `INVALID_RESOURCE_STATE` | 현재 상태에서 요청한 전이 불가 |
+| 409 | `SOCIAL_ACCOUNT_ALREADY_LINKED` | 해당 소셜 계정이 이미 다른 계정에 연결됨 |
+| 409 | `SOCIAL_PROVIDER_ALREADY_LINKED` | 현재 계정에 같은 제공자가 이미 연결됨 |
+| 409 | `LAST_LOGIN_METHOD` | 비밀번호 없는 계정의 마지막 소셜 계정 해제 시도 |
 | 413 | `FILE_TOO_LARGE` | 업로드 최대 크기 초과 |
 | 422 | `BUSINESS_RULE_VIOLATION` | 입력 형식은 맞지만 업무 규칙 위반 |
 | 423 | `SCHEDULE_LOCKED` | 다른 사용자가 편집 잠금 보유 |
 | 429 | `RATE_LIMITED` | 로그인 또는 가입 코드 시도 제한 초과 |
 | 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류 |
+| 502 | `OAUTH_PROVIDER_ERROR` | 제공자의 토큰 교환 또는 사용자 조회 실패 |
 
 ## 7 감사 로그 기록 대상
 
-회원가입을 제외한 로그인과 로그아웃, 병동 개설, 가입 코드 발급, 가입 승인과 반려, 권한 이관, 간호사 등록과 변경과 퇴사, 규칙 변경, 근무표 생성과 셀 변경과 확정과 확정 취소, 자동 생성, 엑셀 입출력, 신청 승인과 반려, 편집 잠금 강제 인수를 기록한다. 비밀번호, 토큰, 전체 업로드 파일과 민감한 자유 입력은 감사 로그에 저장하지 않는다.
+회원가입을 제외한 로그인과 로그아웃, 소셜 로그인과 소셜 가입, 소셜 계정 연결과 해제, 병동 개설, 가입 코드 발급, 가입 승인과 반려, 권한 이관, 간호사 등록과 변경과 퇴사, 규칙 변경, 근무표 생성과 셀 변경과 확정과 확정 취소, 자동 생성, 엑셀 입출력, 신청 승인과 반려, 편집 잠금 강제 인수를 기록한다. 비밀번호, 토큰, 인가 코드, state, 전체 업로드 파일과 민감한 자유 입력은 감사 로그에 저장하지 않는다.
 
 ## 8 API 수용 기준
 
@@ -1024,3 +1135,4 @@
 - 자동 생성 완료, 중단, 실패 후 근무표 상태와 잠금이 복구되어야 한다.
 - 가입 승인, 권한 이관, 일괄 셀 변경과 확정은 부분 저장 없이 원자적으로 처리되어야 한다.
 - 모든 오류 응답은 추적 가능한 `traceId`와 안정적인 오류 코드를 제공해야 한다.
+- 소셜 로그인은 state 검증 없이 완료될 수 없고, 제공자 토큰과 인가 코드가 프론트엔드나 로그에 노출되지 않아야 한다.
