@@ -39,8 +39,16 @@
 | [01. 클라이언트 미팅 정리 (09-28)](docs/01-client-meeting-2026-09-28.md) | 요구사항, 확인된 근무 규칙, 다음 주 할 일 |
 | [02. 기능 명세서 v0.2](docs/02-feature-spec-v0.2.md) | 기능 ID별 입력·처리·출력·예외·권한, 미확정 항목 일람 |
 | [03. API 명세서 v0.1 (초안)](docs/03-api-spec-v0.1.md) | 엔드포인트 목록. 기능 명세서 v0.2 반영 전 |
+| [04. 기능 명세서 v1.0](docs/04-feature-spec-v1.0.md) | 구현과 운영 기준으로 정리한 현재 기능 명세 |
+| [05. API 명세서 v1.0](docs/05-api-spec-v1.0.md) | 인증, 병동, 간호사, 신청, 근무표 등 API 계약 |
+| [06. 기능 DB Notion 보기](docs/06-feature-database-notion-view.md) | Notion 데이터베이스 형식의 기능 목록 |
+| [07. 서비스 처리 로직 v1.0](docs/07-processing-logic-v1.0.md) | 수간호사의 간호사 직접 등록부터 자동 편성·확정까지의 표준 흐름 |
+| [08. 명세·구현 비교 및 개선안 v1.0](docs/08-spec-implementation-review-v1.0.md) | 현재 구현 검토, 위험도별 개선 과제, 출시 기준 |
+| [Notion 가져오기 자료](docs/notion-import/) | 기능·API DB를 Notion으로 가져오기 위한 CSV |
 | [리서치: 아이디어 · 현장 실태](docs/research/01-idea-and-field-survey.md) | 문제 정의, 서비스 방향 (김효주) |
 | [리서치: 개발 리서치](docs/research/02-dev-research.md) | 도메인 규칙, 경쟁 서비스, 스케줄링 알고리즘, 기술 스택 (김민서) |
+
+> 신규 개발과 검수에는 v1.0 문서(04~08)를 기준으로 사용합니다. v0.x 문서는 변경 이력 확인용입니다.
 
 ## 다음 할 일
 
